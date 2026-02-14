@@ -47,7 +47,8 @@ const alphabet = [
 ];
 
 (async () => {
-  var args = process.argv.slice(2)[0];
+  var providedUrl = process.argv.slice(2)[0];
+  var providerType = process.argv.slice(3)[0];
   let downloadLinks = [];
   let retryDownloadLinks = [];
 
@@ -141,10 +142,12 @@ const alphabet = [
     }
   };
 
-  for (let i = 0; i < alphabet.length; i++) {
-    await appendLinks(args, alphabet[i]);
-  }
-  await appendLinks(args, false);
+  const collect = async () => {
+    for (let i = 0; i < alphabet.length; i++) {
+      await appendLinks(providedUrl, alphabet[i]);
+    }
+    await appendLinks(providedUrl, false);
+  };
 
   const downloadFile = async (index, retryCount) => {
     const split = downloadLinks[index].split("/");
@@ -207,20 +210,51 @@ const alphabet = [
     }
   };
 
-  downloadLinks = downloadLinks.reduce((acc, downloadLink) => {
-    if (!acc.includes(downloadLink)) acc.push(downloadLink);
-    return acc;
-  }, []);
-  if (downloadThreads) {
-    for (let i = 0; i < downloadThreads; i++) {
-      setTimeout(
-        () => {
-          downloadFile(i);
-        },
-        i * 250 + (Math.random() / 4) * 100,
-      );
+  const download = async () => {
+    downloadLinks = downloadLinks.reduce((acc, downloadLink) => {
+      if (!acc.includes(downloadLink)) acc.push(downloadLink);
+      return acc;
+    }, []);
+    if (downloadThreads) {
+      for (let i = 0; i < downloadThreads; i++) {
+        setTimeout(
+          () => {
+            downloadFile(i);
+          },
+          i * 250 + (Math.random() / 4) * 100,
+        );
+      }
+    } else {
+      downloadFile(0);
     }
-  } else {
-    downloadFile(0);
+    Promise.resolve();
+  };
+
+  if (!providerType) {
+    console.log("No type provided");
+  }
+
+  if (providerType === "collect") {
+    console.log("Collecting links");
+    await collect();
+
+    await fsPromise.writeFile(
+      "linkList.json",
+      `${JSON.stringify(downloadLinks)}`,
+      "utf8",
+    );
+  }
+
+  if (providerType === "download") {
+    console.log("Downloading links");
+    const fileRead = await fsPromise.readFile("linkList.json", "utf8");
+    if (!fileRead) {
+      console.log("No filelist generated yet");
+      return;
+    }
+
+    downloadLinks = JSON.parse(fileRead);
+
+    await download();
   }
 })();
