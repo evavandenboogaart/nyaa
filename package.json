@@ -1,0 +1,10 @@
+{
+  "name": "nyaaScraper",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "node-html-parser": "^7.0.1"
+  }
+}
