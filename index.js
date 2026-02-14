@@ -164,7 +164,7 @@ const alphabet = [
       },
     );
 
-    const downloadUrl = `${downloadLinks[index].startsWith("/") ? args.replace(/\/\?.*/gim, "") : ""}${downloadLinks[index]}`;
+    const downloadUrl = `${downloadLinks[index].startsWith("/") ? providedUrl.replace(/\/\?.*/gim, "") : ""}${downloadLinks[index]}`;
     console.log(`downloading file ${index + 1} of ${downloadLinks.length}`);
     const filePath = `./dump/${decodeURI(path)}/${decodeURI(fileName)}`;
     const { body } = await fetch(downloadUrl).catch(async (err) => {
