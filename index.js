@@ -1,10 +1,11 @@
 import fs from "fs";
+import fsPromise from "fs/promises";
 import { parse } from "node-html-parser";
 import { Readable } from "stream";
 
-const downloadThreads = 4;
+const downloadThreads = 6;
 const nyaa_max_results = 1000;
-const max_retries = 4;
+const max_retries = 2;
 
 const alphabet = [
   "a",
@@ -48,6 +49,7 @@ const alphabet = [
 (async () => {
   var args = process.argv.slice(2)[0];
   let downloadLinks = [];
+  let retryDownloadLinks = [];
 
   const appendLinks = async (href, letter, isSameLetter) => {
     const url = new URL(href);
@@ -82,7 +84,13 @@ const alphabet = [
         "429 Too Many Requests",
       );
       if (tooManyRequests) {
-        console.log("429: Too many requests");
+        console.log("429: Too many requests, retry in 5 minutes");
+        setTimeout(
+          () => {
+            appendLinks(href, letter, isSameLetter);
+          },
+          1000 * 60 * 5,
+        );
         Promise.resolve();
         return;
       }
@@ -154,31 +162,46 @@ const alphabet = [
     );
 
     const downloadUrl = `${downloadLinks[index].startsWith("/") ? args.replace(/\/\?.*/gim, "") : ""}${downloadLinks[index]}`;
-    console.clear();
     console.log(`downloading file ${index + 1} of ${downloadLinks.length}`);
     const filePath = `./dump/${decodeURI(path)}/${decodeURI(fileName)}`;
-    await fetch(downloadUrl)
-      .then((response) =>
-        Readable.fromWeb(response.body).pipe(
-          fs.unlink(filePath, () =>
-            fs.createWriteStream(filePath, { flags: "wx" }).catch((err) => {
-              console.log(err);
-              if (index + (downloadThreads || 1) < downloadLinks.length) {
-                downloadFile(index + (downloadThreads || 1));
-              }
-            }),
-          ),
-        ),
-      )
-      .catch((err) => {
-        if (retryCount === max_retries) {
-          console.log("Max retries attempted");
-        } else {
-          console.log("Fetch failed, retrying");
-          console.log(err);
-          downloadFile(index, retryCount + 1);
+    const { body } = await fetch(downloadUrl).catch(async (err) => {
+      if (retryCount >= max_retries) {
+        console.log("Max retries attempted");
+        retryDownloadLinks.push(downloadLinks[index]);
+        console.log(retryDownloadLinks.join("\n"));
+      } else {
+        console.log("Fetch failed, retrying");
+        console.log(err);
+        const fileExists = fs.existsSync(filePath);
+        if (fileExists) await fsPromise.unlink(filePath);
+        downloadFile(index, retryCount + 1);
+      }
+    });
+
+    const downloadResBody = await new Response(body).text();
+
+    const tooManyRequests = downloadResBody.includes("429 Too Many Requests");
+    if (tooManyRequests) {
+      console.log("429: Too many requests, retry in 5 minutes");
+      setTimeout(
+        () => {
+          appendLinks(href, letter, isSameLetter);
+        },
+        1000 * 60 * 5,
+      );
+      Promise.resolve();
+      return;
+    }
+
+    new Readable.fromWeb(body).pipe(
+      fs.createWriteStream(filePath, { flags: "wx" }).on("error", (err) => {
+        console.log(err);
+        if (index + (downloadThreads || 1) < downloadLinks.length) {
+          downloadFile(index + (downloadThreads || 1));
         }
-      });
+      }),
+    );
+
     if (index + (downloadThreads || 1) < downloadLinks.length) {
       downloadFile(index + (downloadThreads || 1));
     }
@@ -189,9 +212,14 @@ const alphabet = [
     return acc;
   }, []);
   if (downloadThreads) {
-    Array.from({ length: downloadThreads }).forEach((_, index) => {
-      downloadFile(index);
-    });
+    for (let i = 0; i < downloadThreads; i++) {
+      setTimeout(
+        () => {
+          downloadFile(i);
+        },
+        i * 250 + (Math.random() / 4) * 100,
+      );
+    }
   } else {
     downloadFile(0);
   }
