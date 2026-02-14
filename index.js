@@ -167,19 +167,30 @@ const alphabet = [
     const downloadUrl = `${downloadLinks[index].startsWith("/") ? providedUrl.replace(/\/\?.*/gim, "") : ""}${downloadLinks[index]}`;
     console.log(`downloading file ${index + 1} of ${downloadLinks.length}`);
     const filePath = `./dump/${decodeURI(path)}/${decodeURI(fileName)}`;
-    const { body } = await fetch(downloadUrl).catch(async (err) => {
-      if (retryCount >= max_retries) {
-        console.log("Max retries attempted");
-        retryDownloadLinks.push(downloadLinks[index]);
-        console.log(retryDownloadLinks.join("\n"));
-      } else {
-        console.log("Fetch failed, retrying");
-        console.log(err);
-        const fileExists = fs.existsSync(filePath);
-        if (fileExists) await fsPromise.unlink(filePath);
-        downloadFile(index, retryCount + 1);
-      }
-    });
+    const { body } = await fetch(downloadUrl)
+      .then(({ body: streamBody }) =>
+        Readable.fromWeb(streamBody).pipe(
+          fs.createWriteStream(filePath, { flags: "wx" }).on("error", (err) => {
+            console.log(err);
+            if (index + (downloadThreads || 1) < downloadLinks.length) {
+              downloadFile(index + (downloadThreads || 1));
+            }
+          }),
+        ),
+      )
+      .catch(async (err) => {
+        if (retryCount >= max_retries) {
+          console.log("Max retries attempted");
+          retryDownloadLinks.push(downloadLinks[index]);
+          console.log(retryDownloadLinks.join("\n"));
+        } else {
+          console.log("Fetch failed, retrying");
+          console.log(err);
+          const fileExists = fs.existsSync(filePath);
+          if (fileExists) await fsPromise.unlink(filePath);
+          downloadFile(index, retryCount + 1);
+        }
+      });
 
     const downloadResBody = await new Response(body).text();
 
@@ -195,15 +206,6 @@ const alphabet = [
       Promise.resolve();
       return;
     }
-
-    new Readable.fromWeb(body).pipe(
-      fs.createWriteStream(filePath, { flags: "wx" }).on("error", (err) => {
-        console.log(err);
-        if (index + (downloadThreads || 1) < downloadLinks.length) {
-          downloadFile(index + (downloadThreads || 1));
-        }
-      }),
-    );
 
     if (index + (downloadThreads || 1) < downloadLinks.length) {
       downloadFile(index + (downloadThreads || 1));
