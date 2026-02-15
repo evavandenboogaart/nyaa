@@ -3,11 +3,14 @@ import fsPromise from "fs/promises";
 import { parse } from "node-html-parser";
 import { Readable } from "stream";
 
-const downloadThreads = 6;
+const downloadThreads = 1;
 const nyaa_max_results = 1000;
 const max_retries = 2;
 
 const alphabet = [
+  " ",
+  "+",
+  "[",
   "a",
   "b",
   "c",
@@ -44,6 +47,7 @@ const alphabet = [
   "7",
   "8",
   "9",
+  "＊自炊品",
 ];
 
 (async () => {
@@ -51,20 +55,22 @@ const alphabet = [
   var providerType = process.argv.slice(3)[0];
   let downloadLinks = [];
   let retryDownloadLinks = [];
+  let handledLinks = [];
 
   const appendLinks = async (href, letter, isSameLetter) => {
     const url = new URL(href);
+    const split = url.searchParams.get("q").split(" ");
     if (!isSameLetter && letter) {
       url.searchParams.set(
         "q",
-        `"${url.searchParams.get("q").split(" ")[0]}+${letter}"+${url.searchParams.get("q").split(" ")[1]}`,
+        `"${split[0]}${letter}"${split[1] ? split[1] : ""}`,
       );
 
       url.search = decodeURIComponent(url.search);
     } else if (!isSameLetter) {
       url.searchParams.set(
         "q",
-        `${url.searchParams.get("q").split(" ")[0]} +-${alphabet.map((localLetter) => `"${url.searchParams.get("q").split(" ")[0]}+${localLetter}"`).join("|")}+${url.searchParams.get("q").split(" ")[1]}`,
+        `${split[0]} +-${alphabet.map((localLetter) => `"${split[0]}${localLetter}"`).join("|")}${split[1] ? split[1] : ""}`,
       );
 
       url.search = decodeURIComponent(url.search);
@@ -157,7 +163,7 @@ const alphabet = [
     const path = split.join("/");
 
     await fs.promises.mkdir(
-      `./dump/${decodeURI(path)}`,
+      `./dump${decodeURI(path)}`,
       { recursive: true },
       (err) => {
         console.log(err);
@@ -166,16 +172,21 @@ const alphabet = [
 
     const downloadUrl = `${downloadLinks[index].startsWith("/") ? providedUrl.replace(/\/\?.*/gim, "") : ""}${downloadLinks[index]}`;
     console.log(`downloading file ${index + 1} of ${downloadLinks.length}`);
-    const filePath = `./dump/${decodeURI(path)}/${decodeURI(fileName)}`;
+    const filePath = `./dump${decodeURI(path)}/${decodeURI(fileName)}`;
     const { body } = await fetch(downloadUrl)
       .then(({ body: streamBody }) =>
         Readable.fromWeb(streamBody).pipe(
-          fs.createWriteStream(filePath, { flags: "wx" }).on("error", (err) => {
-            console.log(err);
-            if (index + (downloadThreads || 1) < downloadLinks.length) {
-              downloadFile(index + (downloadThreads || 1));
-            }
-          }),
+          fs
+            .createWriteStream(filePath, { flags: "wx" })
+            .on("finish", async () => {
+              handledLinks.push(downloadLinks[index]);
+            })
+            .on("error", (err) => {
+              console.log(err);
+              if (index + (downloadThreads || 1) < downloadLinks.length) {
+                downloadFile(index + (downloadThreads || 1));
+              }
+            }),
         ),
       )
       .catch(async (err) => {
@@ -229,11 +240,52 @@ const alphabet = [
     } else {
       downloadFile(0);
     }
-    Promise.resolve();
+
+    const currentFileLinksStringified = await fsPromise.readFile(
+      "linkList.json",
+      "utf8",
+    );
+    const currentFileLinks = JSON.parse(currentFileLinksStringified);
+
+    for (let i = 0; i < handledLinks.length; i++) {
+      const currentFileIndex = currentFileLinks.findIndex(
+        (link) => link === handledLinks[i],
+      );
+      currentFileLinks.splice(currentFileIndex, 1);
+    }
+
+    await fsPromise.writeFile(
+      "linkList.json",
+      `${JSON.stringify(currentFileLinks)}`,
+      "utf8",
+    );
   };
 
   if (!providerType) {
     console.log("No type provided");
+  }
+
+  if (providerType === "clean") {
+    const files = await fsPromise.readdir(`./dump/download`);
+    const fileRead = await fsPromise.readFile("linkList.json", "utf8");
+    if (!fileRead) {
+      console.log("No filelist generated yet");
+      return;
+    }
+
+    downloadLinks = JSON.parse(fileRead);
+    for (let i = 0; i < files.length; i++) {
+      const index = downloadLinks.findIndex(
+        (downloadLink) => downloadLink === `/download/${files[i]}`,
+      );
+      downloadLinks.splice(index, 1);
+    }
+
+    await fsPromise.writeFile(
+      "linkList.json",
+      `${JSON.stringify(downloadLinks)}`,
+      "utf8",
+    );
   }
 
   if (providerType === "collect") {
