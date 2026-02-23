@@ -171,9 +171,11 @@ const alphabet = [
     );
 
     const downloadUrl = `${downloadLinks[index].startsWith("/") ? providedUrl.replace(/\/\?.*/gim, "") : ""}${downloadLinks[index]}`;
-    console.log(`downloading file ${index + 1} of ${downloadLinks.length}`);
     const filePath = `./dump${decodeURI(path)}/${decodeURI(fileName)}`;
-    const { body } = await fetch(downloadUrl)
+    console.log(
+      `downloading file ${index + 1} of ${downloadLinks.length} ${filePath}`,
+    );
+    const response = await fetch(downloadUrl)
       .then(({ body: streamBody }) =>
         Readable.fromWeb(streamBody).pipe(
           fs
@@ -203,7 +205,7 @@ const alphabet = [
         }
       });
 
-    const downloadResBody = await new Response(body).text();
+    const downloadResBody = await new Response(response?.body).text();
 
     const tooManyRequests = downloadResBody.includes("429 Too Many Requests");
     if (tooManyRequests) {
@@ -240,29 +242,23 @@ const alphabet = [
     } else {
       downloadFile(0);
     }
-
-    const currentFileLinksStringified = await fsPromise.readFile(
-      "linkList.json",
-      "utf8",
-    );
-    const currentFileLinks = JSON.parse(currentFileLinksStringified);
-
-    for (let i = 0; i < handledLinks.length; i++) {
-      const currentFileIndex = currentFileLinks.findIndex(
-        (link) => link === handledLinks[i],
-      );
-      currentFileLinks.splice(currentFileIndex, 1);
-    }
-
-    await fsPromise.writeFile(
-      "linkList.json",
-      `${JSON.stringify(currentFileLinks)}`,
-      "utf8",
-    );
   };
 
   if (!providerType) {
     console.log("No type provided");
+  }
+
+  if (providerType === "429") {
+    const files = await fsPromise.readdir(`./dump/download`);
+    for (let i = 0; i < files.length; i++) {
+      const fileRead = await fsPromise.readFile(
+        `./dump/download/${files[i]}`,
+        "utf8",
+      );
+      if (fileRead.includes("429 Too Many Requests")) {
+        fsPromise.unlink(`./dump/download/${files[i]}`);
+      }
+    }
   }
 
   if (providerType === "clean") {
@@ -278,7 +274,7 @@ const alphabet = [
       const index = downloadLinks.findIndex(
         (downloadLink) => downloadLink === `/download/${files[i]}`,
       );
-      downloadLinks.splice(index, 1);
+      if (index !== -1) downloadLinks.splice(index, 1);
     }
 
     await fsPromise.writeFile(
